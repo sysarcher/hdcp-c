@@ -1,0 +1,74 @@
+*********************************************
+       HDCP Encryption/Decryption Code       
+       Rob Johnson (rob@cs.sunysb.edu)       
+     Mikhail Rubnich (rubnich@gmail.com)     
+*********************************************
+
+This is a software implementation of the HDCP encryption algorithm.
+We are releasing this code in hopes that it might be useful to other
+people researching or implementing the HDCP protocol.
+
+COMPILE: make
+TEST: ./hdcp -t
+     (If there is any "!" in the output, then there was an error)
+BENCHMARK: ./hdcp -S
+
+The HDCP cipher is designed to be efficient when implemented in
+hardware, but it is terribly inefficient in software, primarily
+because it makes extensive use of bit operations.  Our implementation
+uses bit-slicing to achieve high speeds by exploiting bit-level
+parallelism.  We have created a few high-level routines to make it as
+easy as possible to implement HDCP, as shown in the following example.
+
+Given Km, REPEATER, and An from the initial HDCP handshake messages,
+all a decryptor needs to do is:
+
+#define NFRAMES (64) /* NFRAMES must be <= 64 */
+
+void HDCP(uint64_t Km, uint64_t REPEATER, uint64_t An, int width, int height)
+{
+  uint64_t Ks, R0, M0, Mi[NFRAMES], Ki[NFRAMES], Ri[NFRAMES], outputs[height][width][NFRAMES];
+  BS_HDCPCipherState hs;
+
+  /* Generate the session key Ks, the checksum R0, and the initial IV M0 */
+  HDCPAuthentication(Km, REPEATER, An, &Ks, &R0, &M0);
+
+  /* Finish HDCP handshake using R0 */
+  /* ... */
+
+  Mi[NFRAMES-1] = M0;  
+  while(/* there's more video to encrypt/decrypt... */) {
+
+    /* Generate the Ki, Ri, Mi, and stream cipher outputs for the next NFRAMES frames */
+    HDCPInitializeMultiFrameState(NFRAMES, Ks, REPEATER, Mi[NFRAMES-1], &hs, Ki, Ri, Mi);
+    HDCPFrameStream(NFRAMES, height, width, &hs, outputs);
+
+    /* xor the next NFRAME frames of video data with outputs... */
+    /* ... */
+  }
+}
+
+Since our implementation is bit-sliced, it can generate the output for
+up to 64 frames of video in parallel.  This is much faster than a
+non-bit-sliced implementation that generates 1 frame of stream cipher
+output at a time, but has the disadvantage of requiring a lot of ram
+to save the outputs for future frames.
+
+The core cipher code is in hdcp_cipher.[ch].  The example program
+hdcp.c has two functions of interest:
+- print_test_vectors() generates and prints the test vectors from HDCP 1.4, 
+  Tables A-3 and A-4.  Obviously, they all pass.
+- measure_hdcp_stream_speed() measures the performance for generating stream 
+  cipher output and provides an example of using the library.
+
+Some benchmarks on 640x480 frames (using only a single core):
+  CPU                                              frames/sec
+  -----------------------------------------------------------
+  Intel(R) Xeon(R) CPU 5140  @ 2.33GHz                    181
+  Intel(R) Core(TM)2 Duo CPU P9600  @ 2.53GHz              83
+  -----------------------------------------------------------
+Decryption of 1080p content is about 7x slower but decryption 
+can be parallelized across multiple cores, so a high-end 64-bit 
+CPU should be able to decrypt 30fps 1080p content using two cores 
+and about 1.6GB of RAM.
+
